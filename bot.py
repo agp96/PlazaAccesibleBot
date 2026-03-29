@@ -90,7 +90,7 @@ def query_local_db(lat: float, lon: float, radius: int) -> list:
         if dist <= radius:
             results.append({
                 'lat': plat, 'lon': plon,
-                'tags': {'name': f'Plaza PMR – {ciudad}'},
+                'tags': {'name': f'Plaza – {ciudad}'},
                 'fuente': fuente,
                 '_dist': dist
             })
@@ -108,7 +108,7 @@ def merge_results(osm: list, local: list) -> list:
 
 
 def search_plazas(lat: float, lon: float):
-    """Busca en OSM + DB. Amplía a 2km si no hay resultados a 800m."""
+    """Busca en OSM + DB. Amplía a 2km si no hay resultados a 500m."""
     for radius in (500, 2000):
         osm = query_overpass(lat, lon, radius)
         local = query_local_db(lat, lon, radius)
@@ -134,7 +134,7 @@ def format_result(plaza: dict, idx: int) -> str:
         lineas.append(f"🏠 {direccion}")
     if plazas_n:
         lineas.append(f"♿ Plazas reservadas: {plazas_n}")
-    lineas.append(f"📏 A {dist} m · {fuente}")
+    lineas.append(f"➡️ A {dist} m · {fuente}")
     return "\n".join(lineas)
 
 
@@ -143,7 +143,7 @@ def format_result(plaza: dict, idx: int) -> str:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "♿ *Bot de Aparcamiento para Discapacitados*\n\n"
-        "Envíame tu 📍 *ubicación* y te mostraré las plazas PMR más cercanas.\n\n"
+        "Envíame tu 📍 *ubicación* y te mostraré las plazas más cercanas.\n\n"
         "Usa /ayuda para más información.",
         parse_mode="Markdown"
     )
@@ -160,12 +160,11 @@ async def ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "ℹ️ *Cómo usar el bot:*\n\n"
         "1️⃣ Pulsa el clip 📎 → *Ubicación*\n"
-        "2️⃣ Busca en 800 m, amplía a 2 km si no hay resultados\n"
+        "2️⃣ Busca en 500 m, amplía a 2 km si no hay resultados\n"
         "3️⃣ Navega a cada plaza con Google Maps\n\n"
         "📊 *Fuentes de datos:*\n"
-        "• OpenStreetMap (cobertura nacional)\n"
-        "• Datos oficiales de ayuntamientos:\n"
-        f"{ciudades}\n\n"
+        "• OpenStreetMap\n"
+        "• Datos oficiales de ayuntamientos en datos.gob.es\n"
         "/start — Inicio · /ayuda — Esta ayuda",
         parse_mode="Markdown"
     )
@@ -181,7 +180,7 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not plazas:
         await msg.edit_text(
-            "😔 No encontré plazas PMR en un radio de 2 km.\n\n"
+            "😔 No encontré plazas en un radio de 2 km.\n\n"
             "Puede que no estén mapeadas aún. Puedes contribuir en openstreetmap.org"
         )
         return
