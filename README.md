@@ -1,16 +1,20 @@
-# ♿ Bot de Aparcamiento para Discapacitados
+# ♿ AccessibleParkBot
 
-Bot de Telegram que localiza plazas de aparcamiento reservadas para discapacitados. Accede a él en Telegram @AccessibleParkBot
+Telegram bot that finds nearby disabled parking spaces in real time. Available at @AccessibleParkBot
 
-## Uso del bot
+## How to use
+1. Send your 📍 location
+2. Get the 2 nearest disabled parking spaces within 500 m
+3. Navigate directly with Google Maps
 
-1. `/start` — Mensaje de bienvenida
-2. `/help` — Instrucciones
-3. `/newpark`- Añadir nueva plaza 
-4. Enviar 📍 ubicación → devuelve 2 en 500 m ordenadas por distancia
+## Commands
+- `/start` — Start the bot and select language
+- `/help` — Instructions
+- `/newparking` — Submit a new parking space
 
-## Datos
+## Data sources
+- [OpenStreetMap](https://www.openstreetmap.org) (global coverage)
+- Official municipal datasets from [datos.gob.es](https://datos.gob.es)
 
-- OpenStreetMap
-- Direcciones aportadas por los municipios en datos.gob.es
-
+## License
+Code: MIT · Data: ODbL (OpenStreetMap)
