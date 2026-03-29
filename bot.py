@@ -1,4 +1,6 @@
 import os
+import math
+import sqlite3
 import logging
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -6,7 +8,6 @@ from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
-    CallbackQueryHandler,
     filters,
     ContextTypes,
 )
@@ -18,12 +19,24 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
-SEARCH_RADIUS = 800  # metros
 MAX_RESULTS = 8
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'plazas.db')
 
 
-def query_overpass(lat: float, lon: float, radius: int = SEARCH_RADIUS) -> list:
-    """Consulta Overpass API para plazas de discapacitados cercanas."""
+# ─── Utilidades ────────────────────────────────────────────────────────────
+
+def haversine(lat1, lon1, lat2, lon2) -> float:
+    R = 6371000
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
+    return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+# ─── Fuentes de datos ──────────────────────────────────────────────────────
+
+def query_overpass(lat: float, lon: float, radius: int) -> list:
     query = f"""
     [out:json][timeout:10];
     (
@@ -35,55 +48,94 @@ def query_overpass(lat: float, lon: float, radius: int = SEARCH_RADIUS) -> list:
     out center body;
     """
     try:
-        response = requests.post(OVERPASS_URL, data={"data": query}, timeout=15)
-        response.raise_for_status()
-        data = response.json()
-        return data.get("elements", [])
+        r = requests.post(OVERPASS_URL, data={"data": query}, timeout=15)
+        r.raise_for_status()
+        results = []
+        for e in r.json().get("elements", []):
+            elat = e.get("center", {}).get("lat") or e.get("lat")
+            elon = e.get("center", {}).get("lon") or e.get("lon")
+            if elat and elon:
+                tags = e.get("tags", {})
+                results.append({
+                    'lat': elat, 'lon': elon, 'tags': tags,
+                    'fuente': 'OpenStreetMap',
+                    '_dist': haversine(lat, lon, elat, elon)
+                })
+        return results
     except Exception as e:
-        logger.error(f"Error Overpass API: {e}")
+        logger.error(f"Error Overpass: {e}")
         return []
 
 
-def haversine(lat1, lon1, lat2, lon2) -> float:
-    """Calcula distancia en metros entre dos coordenadas."""
-    from math import radians, sin, cos, sqrt, atan2
-    R = 6371000
-    phi1, phi2 = radians(lat1), radians(lat2)
-    dphi = radians(lat2 - lat1)
-    dlambda = radians(lon2 - lon1)
-    a = sin(dphi / 2) ** 2 + cos(phi1) * cos(phi2) * sin(dlambda / 2) ** 2
-    return 2 * R * atan2(sqrt(a), sqrt(1 - a))
+def query_local_db(lat: float, lon: float, radius: int) -> list:
+    if not os.path.exists(DB_PATH):
+        return []
+    lat_d = radius / 111000
+    lon_d = radius / (111000 * abs(math.cos(math.radians(lat))) + 1e-9)
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        rows = conn.execute(
+            'SELECT ciudad, lat, lon, fuente FROM plazas '
+            'WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?',
+            (lat - lat_d, lat + lat_d, lon - lon_d, lon + lon_d)
+        ).fetchall()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Error SQLite: {e}")
+        return []
+
+    results = []
+    for ciudad, plat, plon, fuente in rows:
+        dist = haversine(lat, lon, plat, plon)
+        if dist <= radius:
+            results.append({
+                'lat': plat, 'lon': plon,
+                'tags': {'name': f'Plaza PMR – {ciudad}'},
+                'fuente': fuente,
+                '_dist': dist
+            })
+    return results
 
 
-def format_result(element: dict, user_lat: float, user_lon: float, idx: int) -> tuple:
-    """Formatea un resultado de OSM y devuelve (texto, lat, lon)."""
-    if element["type"] == "way":
-        lat = element.get("center", {}).get("lat")
-        lon = element.get("center", {}).get("lon")
-    else:
-        lat = element.get("lat")
-        lon = element.get("lon")
+def merge_results(osm: list, local: list) -> list:
+    """Combina OSM + local eliminando duplicados por proximidad (<15m)."""
+    combined = list(osm)
+    for loc in local:
+        if not any(haversine(loc['lat'], loc['lon'], o['lat'], o['lon']) < 15 for o in osm):
+            combined.append(loc)
+    combined.sort(key=lambda x: x['_dist'])
+    return combined[:MAX_RESULTS]
 
-    if not lat or not lon:
-        return None, None, None
 
-    tags = element.get("tags", {})
-    distancia = int(haversine(user_lat, user_lon, lat, lon))
+def search_plazas(lat: float, lon: float):
+    """Busca en OSM + DB. Amplía a 2km si no hay resultados a 800m."""
+    for radius in (800, 2000):
+        osm = query_overpass(lat, lon, radius)
+        local = query_local_db(lat, lon, radius)
+        combined = merge_results(osm, local)
+        if combined:
+            return combined, radius
+    return [], 2000
 
-    nombre = tags.get("name", tags.get("operator", f"Plaza {idx}"))
-    plazas = tags.get("capacity:disabled", tags.get("capacity", "?"))
-    direccion = tags.get("addr:street", "")
-    if tags.get("addr:housenumber"):
+
+# ─── Formato ───────────────────────────────────────────────────────────────
+
+def format_result(plaza: dict, idx: int) -> str:
+    tags = plaza.get('tags', {})
+    dist = int(plaza['_dist'])
+    fuente = plaza.get('fuente', 'OpenStreetMap')
+    nombre = tags.get('name', f'Plaza PMR #{idx}')
+    plazas_n = tags.get('capacity:disabled', '')
+    direccion = tags.get('addr:street', '')
+    if tags.get('addr:housenumber'):
         direccion += f" {tags['addr:housenumber']}"
-
     lineas = [f"📍 *{nombre}*"]
     if direccion:
         lineas.append(f"🏠 {direccion}")
-    if plazas != "?":
-        lineas.append(f"♿ Plazas reservadas: {plazas}")
-    lineas.append(f"📏 A {distancia} m de tu ubicación")
-
-    return "\n".join(lineas), lat, lon
+    if plazas_n:
+        lineas.append(f"♿ Plazas reservadas: {plazas_n}")
+    lineas.append(f"📏 A {dist} m · {fuente}")
+    return "\n".join(lineas)
 
 
 # ─── Handlers ──────────────────────────────────────────────────────────────
@@ -91,23 +143,30 @@ def format_result(element: dict, user_lat: float, user_lon: float, idx: int) -> 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "♿ *Bot de Aparcamiento para Discapacitados*\n\n"
-        "Envíame tu 📍 *ubicación* y te mostraré las plazas reservadas más cercanas según OpenStreetMap.\n\n"
-        "También puedes usar /ayuda para más información.",
+        "Envíame tu 📍 *ubicación* y te mostraré las plazas PMR más cercanas.\n\n"
+        "Usa /ayuda para más información.",
         parse_mode="Markdown"
     )
 
 
 async def ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    ciudades = ""
+    if os.path.exists(DB_PATH):
+        conn = sqlite3.connect(DB_PATH)
+        rows = conn.execute('SELECT ciudad, COUNT(*) FROM plazas GROUP BY ciudad ORDER BY ciudad').fetchall()
+        conn.close()
+        ciudades = "\n".join(f"  • {c} ({n} plazas)" for c, n in rows)
+
     await update.message.reply_text(
         "ℹ️ *Cómo usar el bot:*\n\n"
-        "1️⃣ Pulsa el clip 📎 → *Ubicación* y envía tu posición\n"
-        "2️⃣ El bot buscará plazas PMR en un radio de ~800 m\n"
-        "3️⃣ Podrás ver cada plaza en Google Maps\n\n"
-        "⚠️ Los datos provienen de *OpenStreetMap*. "
-        "Si falta alguna plaza, puedes contribuir en openstreetmap.org\n\n"
-        "Comandos:\n"
-        "/start — Inicio\n"
-        "/ayuda — Esta ayuda",
+        "1️⃣ Pulsa el clip 📎 → *Ubicación*\n"
+        "2️⃣ Busca en 800 m, amplía a 2 km si no hay resultados\n"
+        "3️⃣ Navega a cada plaza con Google Maps\n\n"
+        "📊 *Fuentes de datos:*\n"
+        "• OpenStreetMap (cobertura nacional)\n"
+        "• Datos oficiales de ayuntamientos:\n"
+        f"{ciudades}\n\n"
+        "/start — Inicio · /ayuda — Esta ayuda",
         parse_mode="Markdown"
     )
 
@@ -118,59 +177,30 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = await update.message.reply_text("🔍 Buscando plazas cercanas...")
 
-    elements = query_overpass(user_lat, user_lon, radius=800)
+    plazas, radio = search_plazas(user_lat, user_lon)
 
-    if not elements:
-        await msg.edit_text("🔍 Nada en 800 m, ampliando a 2 km...")
-        elements = query_overpass(user_lat, user_lon, radius=2000)
-
-    if not elements:
+    if not plazas:
         await msg.edit_text(
-            "😔 No encontré plazas de aparcamiento para discapacitados en un radio de 2 km.\n\n"
-            "Puede que no estén mapeadas en OpenStreetMap. "
-            "Puedes contribuir en openstreetmap.org"
+            "😔 No encontré plazas PMR en un radio de 2 km.\n\n"
+            "Puede que no estén mapeadas aún. Puedes contribuir en openstreetmap.org"
         )
         return
 
-    # Ordenar por distancia
-    def distancia_elem(e):
-        lat = e.get("center", {}).get("lat") or e.get("lat")
-        lon = e.get("center", {}).get("lon") or e.get("lon")
-        if lat and lon:
-            return haversine(user_lat, user_lon, lat, lon)
-        return float("inf")
+    radio_txt = "800 m" if radio == 800 else "2 km"
+    await msg.edit_text(f"✅ {len(plazas)} plaza(s) encontrada(s) en {radio_txt}.")
 
-    elements.sort(key=distancia_elem)
-    elements = elements[:MAX_RESULTS]
-
-    resultados_validos = 0
-    for idx, element in enumerate(elements, 1):
-        texto, lat, lon = format_result(element, user_lat, user_lon, idx)
-        if not texto:
-            continue
-
+    for idx, plaza in enumerate(plazas, 1):
+        texto = format_result(plaza, idx)
+        lat, lon = plaza['lat'], plaza['lon']
         keyboard = [[
-            InlineKeyboardButton(
-                "🗺️ Ver en Google Maps",
-                url=f"https://www.google.com/maps?q={lat},{lon}"
-            ),
-            InlineKeyboardButton(
-                "🧭 Cómo llegar",
-                url=f"https://www.google.com/maps/dir/?api=1&destination={lat},{lon}&travelmode=driving"
-            )
+            InlineKeyboardButton("🗺️ Ver en Maps", url=f"https://www.google.com/maps?q={lat},{lon}"),
+            InlineKeyboardButton("🧭 Cómo llegar", url=f"https://www.google.com/maps/dir/?api=1&destination={lat},{lon}&travelmode=driving"),
         ]]
-
         await update.message.reply_text(
             texto,
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
-        resultados_validos += 1
-
-    await msg.edit_text(
-        f"✅ Encontré *{resultados_validos}* plaza(s) en un radio de 800 m.",
-        parse_mode="Markdown"
-    )
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -187,17 +217,13 @@ def main():
     token = os.environ.get("TELEGRAM_TOKEN")
     if not token:
         raise ValueError("Falta la variable de entorno TELEGRAM_TOKEN")
-
     app = Application.builder().token(token).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ayuda", ayuda))
     app.add_handler(MessageHandler(filters.LOCATION, handle_location))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-
     logger.info("Bot iniciado...")
     app.run_polling(drop_pending_updates=True)
-
 
 if __name__ == "__main__":
     main()
