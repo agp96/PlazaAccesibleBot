@@ -76,7 +76,7 @@ def query_local_db(lat: float, lon: float, radius: int) -> list:
         conn = sqlite3.connect(DB_PATH)
         rows = conn.execute(
             'SELECT ciudad, lat, lon, fuente FROM plazas '
-            'WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?',
+            'WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? AND estado="verificada"',
             (lat - lat_d, lat + lat_d, lon - lon_d, lon + lon_d)
         ).fetchall()
         conn.close()
@@ -165,14 +165,13 @@ async def ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📊 *Fuentes de datos:*\n"
         "• OpenStreetMap\n"
         "• Datos oficiales de ayuntamientos en datos.gob.es\n"
-        "/start — Inicio · /ayuda — Esta ayuda · /nuevaplaza — Envía a OpenStreetMap una nueva plaza",
+        "/start — Inicio · /ayuda — Esta ayuda · /nuevaplaza — Registra una nueva plaza",
         parse_mode="Markdown"
     )
 
 async def nueva_plaza(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🗺️ *Añadir una plaza nueva*\n\n"
-        "Envíame tu 📍 *ubicación* cerca de la plaza y te daré el enlace para añadirla a OpenStreetMap.",
+        "📍 Envíame la *ubicación exacta* de la plaza y la añadiremos para revisión.",
         parse_mode="Markdown"
     )
     context.user_data['esperando_nueva_plaza'] = True
@@ -184,14 +183,14 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if context.user_data.get('esperando_nueva_plaza'):
         context.user_data['esperando_nueva_plaza'] = False
-        url = f"https://www.openstreetmap.org/edit?lat={user_lat}&lon={user_lon}#map=19/{user_lat}/{user_lon}"
-        await update.message.reply_text(
-            "✅ Aquí tienes el enlace para añadir la plaza en OpenStreetMap:\n\n"
-            f"[Abrir editor OSM]({url})\n\n"
-            "Añade un nodo con la etiqueta `amenity=parking_space` y `access=disabled`.",
-            parse_mode="Markdown",
-            disable_web_page_preview=True
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute(
+            'INSERT INTO plazas (ciudad, lat, lon, fuente, estado) VALUES (?, ?, ?, ?, ?)',
+            ('Desconocida', user_lat, user_lon, 'Usuario', 'pendiente')
         )
+        conn.commit()
+        conn.close()
+        await update.message.reply_text("✅ Plaza enviada, la revisaremos pronto. ¡Gracias!")
         return
     
     msg = await update.message.reply_text("🔍 Buscando plazas cercanas...")
