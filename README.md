@@ -11,7 +11,6 @@ usando datos de OpenStreetMap (Overpass API). Gratis, sin APIs de pago.
 
 ## Datos
 
-- Fuente: [OpenStreetMap](https://www.openstreetmap.org) vía Overpass API
-- Cobertura: depende de lo mapeado por la comunidad OSM
-- Actualización: en tiempo real (la API siempre tiene los datos más recientes)
+- OpenStreetMap
+- Direcciones aportadas por los municipios en datos.gob.es
 
