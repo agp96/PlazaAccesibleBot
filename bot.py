@@ -187,20 +187,23 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     radio_txt = "800 m" if radio == 800 else "2 km"
-    await msg.edit_text(f"✅ {len(plazas)} plaza(s) encontrada(s) en {radio_txt}.")
+    top2 = plazas[:2]
 
-    for idx, plaza in enumerate(plazas, 1):
-        texto = format_result(plaza, idx)
+    texto = f"♿ *{len(plazas)} plaza(s) encontrada(s) en {radio_txt}*\n\n"
+    texto += "\n\n".join(format_result(p, i+1) for i, p in enumerate(top2))
+
+    keyboard = []
+    for i, plaza in enumerate(top2, 1):
         lat, lon = plaza['lat'], plaza['lon']
-        keyboard = [[
-            InlineKeyboardButton("🗺️ Ver en Maps", url=f"https://www.google.com/maps?q={lat},{lon}"),
-            InlineKeyboardButton("🧭 Cómo llegar", url=f"https://www.google.com/maps/dir/?api=1&destination={lat},{lon}&travelmode=driving"),
-        ]]
-        await update.message.reply_text(
-            texto,
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        keyboard.append([
+            InlineKeyboardButton(f"🧭 Cómo llegar a plaza {i}", url=f"https://www.google.com/maps/dir/?api=1&destination={lat},{lon}&travelmode=driving"),
+        ])
+
+    await msg.edit_text(
+        texto,
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
