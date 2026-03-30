@@ -26,7 +26,7 @@ TEXTS = {
     "es": {
         "searching": "🔍 Buscando plazas cercanas...",
         "parking_spaces": "♿ Plazas reservadas: {plazas_n}",
-        "distance": "➡️ A {dist} m · {fuente}",
+        "distance": "➡️ A {dist} m",
         "not_found": "😔 No encontré plazas en un radio de 2 km.\n\nPuede que no estén mapeadas aún. Añade una nueva plaza con /newparking",
         "found": "♿ *{n} plaza(s) encontrada(s) en {radio}*",
         "directions": "🧭 Cómo llegar a Plaza {i}",
@@ -41,7 +41,7 @@ TEXTS = {
     "en": {
         "searching": "🔍 Searching for nearby spaces...",
         "parking_spaces": "♿ Parking spaces: {plazas_n}",
-        "distance": "➡️ {dist} m away · {fuente}",
+        "distance": "➡️ {dist} m away",
         "not_found": "😔 No disabled parking spaces found within 2 km.\n\nThey may not be mapped yet. Send a new parking space with /newparking",
         "found": "♿ *{n} park(s) found within {radio}*",
         "directions": "🧭 Directions to Parking {i}",
@@ -200,10 +200,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = context.user_data["lang"]
     if lang == "es":
         keyboard = [[InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")]]
-        texto = "♿ *AccessibleParkBot*\n\nEnvía tu 📍 ubicación para encontrar plazas cercanas."
+        texto = "♿ *ParkingDisBot*\n\nEnvía tu 📍 ubicación para encontrar plazas cercanas."
     else:
         keyboard = [[InlineKeyboardButton("🇪🇸 Español", callback_data="lang_es")]]
-        texto = "♿ *AccessibleParkBot*\n\nSend your 📍 location to find nearby disabled parking spaces."
+        texto = "♿ *ParkingDisBot*\n\nSend your 📍 location to find nearby disabled parking spaces."
 
     await update.message.reply_text(
         texto, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard)
